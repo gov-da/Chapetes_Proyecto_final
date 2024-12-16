@@ -15,9 +15,10 @@
 
 2. Generar la orden
 	2.1. Comprobar que el cliente exista
-	2.2. Comprobar que el empleado exista
-	2.3. Generar la orden
-	2.4. Generar los detalles y eliminarlos del carrito
+	2.2. Comprobar que el cliente tenga algo en carrito
+	2.3. Comprobar que el empleado exista
+	2.4. Generar la orden
+	2.5. Generar los detalles y eliminarlos del carrito
 */
 
 
@@ -171,33 +172,27 @@ SELECT dbo.ComprobarStock(1, 201) AS StockExiste;
 
 
 -- Alterar el stock del producto
-create procedure AlterarStock(
+create alter procedure AlterarStock(
 	@_id_producto int,
 	@_cantidad int
 )
 as
 begin
 	declare
-		@_cantidadComparar int,
-		@_ban bit;
+		@_cantidadComparar int
 	select @_cantidadComparar= cantidad_existencia from productos where id_producto = @_id_producto;
-	if @_cantidad <= @_cantidadComparar 
+	if @_cantidad < @_cantidadComparar 
 	begin
 		update productos set cantidad_existencia = cantidad_existencia - @_cantidad where id_producto = @_id_producto;
-		if @_cantidad = @_cantidadComparar
-		begin
-			update productos set id_disponibilidad = 2 where id_producto = @_id_producto;
-		end
-		set @_ban = 1;
 	end
 	else
 	begin
-		set @_ban = 0;
+		update productos set cantidad_existencia = 0 where id_producto = @_id_producto;
+		update productos set id_disponibilidad = 2 where id_producto = @_id_producto;
 	end
-	select @_ban;
 end;
 
-exec AlterarStock 2, 45
+exec AlterarStock 10, 1
 
 
 -- Comprobar que no sea un producto repetido
@@ -273,9 +268,32 @@ select * from carrito
 select * from ordenes
 
 
+-- Comprobar que el cliente tenga algo en carrito
+create function ComprobarClienteCarrito(
+	@_id_cliente int
+)
+returns bit
+as
+begin
+	declare
+		@_ban bit;
+	if exists(select 1 from carrito where id_cliente = @_id_cliente)
+	begin
+		set @_ban = 1;
+	end
+	else
+	begin
+		set @_ban = 0;
+	end
+	return @_ban;
+end;
+
+select dbo.ComprobarClienteCarrito(3)
+
+
 -- Resolución de la problemática
 -- 1. Agregar a carrito
-create procedure AgregarCarrito(
+create alter procedure AgregarCarrito(
 	@_id_producto int,
 	@_id_cliente int,
 	@_cantidad int
@@ -305,6 +323,7 @@ begin
 
 						exec dbo.AlterarStock @_id_producto, @_cantidad
 						exec dbo.InsertarProducto @_id_producto, @_id_cliente, @_cantidad
+						print 'Producto agregado al carrito exitosamente'
 					
 					end
 					else
@@ -331,8 +350,6 @@ begin
 		end
 end;
 
-exec dbo.AgregarCarrito 7, 3, 3
-
 
 -- 2. Generar la orden
 create procedure CrearOrden(
@@ -350,28 +367,39 @@ begin
 	if @_ban = 1
 	begin
 
-		set @_ban = dbo.ComprobarTipo(@_id_tipo_orden)
+		set @_ban = dbo.ComprobarClienteCarrito(@_id_cliente)
 		if @_ban = 1
 		begin
 
-			set @_ban = dbo.ComprobarEmpleado(@_id_empleado)
+			set @_ban = dbo.ComprobarTipo(@_id_tipo_orden)
 			if @_ban = 1
 			begin
 
-				insert into ordenes values (@_id_cliente, @_id_tipo_orden, @_id_empleado, getdate(), 1)
-				set @_id_orden = (select max(id_orden) from ordenes)
-				exec dbo.GenerarDetalles @_id_orden, @_id_cliente
+				set @_ban = dbo.ComprobarEmpleado(@_id_empleado)
+				if @_ban = 1
+				begin
+
+					insert into ordenes values (@_id_cliente, @_id_tipo_orden, @_id_empleado, getdate(), 1)
+					set @_id_orden = (select max(id_orden) from ordenes)
+					exec dbo.GenerarDetalles @_id_orden, @_id_cliente
+					select sum(cantidad * precio) as Total from detalle_ordenes where id_orden = @_id_orden
 			
+				end
+				else
+				begin
+					print 'El empleado no existe';
+				end
+
 			end
 			else
 			begin
-				print 'El empleado no existe';
+				print 'El tipo de orden no existe';
 			end
 
 		end
 		else
 		begin
-			print 'El tipo de orden no existe';
+			print 'El cliente no tiene porductos en el carrito'
 		end
 
 	end
@@ -381,4 +409,19 @@ begin
 	end
 end;
 
-exec CrearOrden 7, 1, 2
+
+begin transaction
+	select * from productos
+	exec dbo.AgregarCarrito 3, 3, 2
+	select * from carrito
+	exec dbo.AgregarCarrito 7, 3, 1
+	select * from carrito
+	exec dbo.AgregarCarrito 8, 2, 3
+	select * from carrito
+	exec CrearOrden 7, 1, 2
+commit
+rollback
+
+select * from detalle_ordenes
+select * from productos
+select * from ordenes
